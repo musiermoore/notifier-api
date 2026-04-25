@@ -36,6 +36,12 @@ func NewRouter(cfg config.Config, store *database.DB) http.Handler {
 	mux.HandleFunc("POST /v1/auth/login", app.handleLogin)
 	mux.Handle("GET /v1/auth/me", app.requireAuth(http.HandlerFunc(app.handleMe)))
 	mux.Handle("POST /v1/auth/logout", app.requireAuth(http.HandlerFunc(app.handleLogout)))
+	mux.Handle("GET /v1/telegram/link", app.requireAuth(http.HandlerFunc(app.handleTelegramLinkStatus)))
+	mux.Handle("POST /v1/telegram/link-code", app.requireAuth(http.HandlerFunc(app.handleTelegramLinkCode)))
+	mux.Handle("DELETE /v1/telegram/link", app.requireAuth(http.HandlerFunc(app.handleTelegramUnlink)))
+	mux.HandleFunc("POST /v1/telegram/consume-link", app.handleTelegramConsumeLink)
+	mux.Handle("GET /v1/internal/telegram/deliveries/pending", app.requireBotService(http.HandlerFunc(app.handlePendingTelegramDeliveries)))
+	mux.Handle("POST /v1/internal/telegram/deliveries/", app.requireBotService(http.HandlerFunc(app.handleTelegramDeliveryAction)))
 	mux.Handle("GET /v1/items", app.requireAuth(http.HandlerFunc(app.handleListItems)))
 	mux.Handle("POST /v1/items", app.requireAuth(http.HandlerFunc(app.handleCreateItem)))
 	mux.Handle("GET /v1/sync/pull", app.requireAuth(http.HandlerFunc(app.handleSyncPull)))
@@ -147,6 +153,123 @@ func (app *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	token := bearerToken(r.Header.Get("Authorization"))
 	if err := app.store.DeleteSession(r.Context(), token); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (app *App) handleTelegramLinkStatus(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r.Context())
+	status, err := app.store.GetTelegramLinkStatus(r.Context(), user.ID, app.cfg.TelegramBotUsername)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (app *App) handleTelegramLinkCode(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r.Context())
+	linkCode, err := app.store.CreateTelegramLinkCode(r.Context(), user.ID, 10*time.Minute)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"code":         linkCode.Code,
+		"expires_at":   linkCode.ExpiresAt,
+		"bot_username": app.cfg.TelegramBotUsername,
+	})
+}
+
+func (app *App) handleTelegramUnlink(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r.Context())
+	if err := app.store.UnlinkTelegram(r.Context(), user.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (app *App) handleTelegramConsumeLink(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Code     string  `json:"code"`
+		ChatID   string  `json:"chat_id"`
+		Username *string `json:"username"`
+	}
+
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+
+	if strings.TrimSpace(input.Code) == "" || strings.TrimSpace(input.ChatID) == "" {
+		writeError(w, http.StatusBadRequest, "code and chat_id are required")
+		return
+	}
+
+	user, err := app.store.ConsumeTelegramLinkCode(r.Context(), input.Code, input.ChatID, normalizeOptionalString(input.Username))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, database.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"user": user,
+	})
+}
+
+func (app *App) handlePendingTelegramDeliveries(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	deliveries, err := app.store.ListPendingTelegramDeliveries(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deliveries": deliveries,
+	})
+}
+
+func (app *App) handleTelegramDeliveryAction(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/internal/telegram/deliveries/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 {
+		writeError(w, http.StatusNotFound, "delivery route not found")
+		return
+	}
+
+	deliveryID := parts[0]
+	action := parts[1]
+
+	switch action {
+	case "complete":
+		if err := app.store.MarkTelegramDeliveryComplete(r.Context(), deliveryID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	case "fail":
+		var input struct {
+			Error string `json:"error"`
+		}
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+		if err := app.store.MarkTelegramDeliveryFailed(r.Context(), deliveryID, input.Error); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	default:
+		writeError(w, http.StatusNotFound, "delivery action not found")
 		return
 	}
 
@@ -339,6 +462,17 @@ func (app *App) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+func (app *App) requireBotService(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimSpace(r.Header.Get("X-Service-Token")) != app.cfg.BotServiceToken {
+			writeError(w, http.StatusUnauthorized, "invalid service token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func currentUser(ctx context.Context) domain.User {
 	user, _ := ctx.Value(userContextKey).(domain.User)
 	return user
@@ -413,6 +547,19 @@ func chooseBool(incoming *bool, current bool) bool {
 	}
 
 	return current
+}
+
+func normalizeOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
 }
 
 func withCORS(next http.Handler) http.Handler {

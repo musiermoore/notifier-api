@@ -57,13 +57,14 @@ func (db *DB) Login(ctx context.Context, email, password string, ttl time.Durati
 	email = normalizeEmail(email)
 
 	var (
-		user         domain.User
-		passwordHash string
-		telegramChat *string
+		user             domain.User
+		passwordHash     string
+		telegramChat     *string
+		telegramUsername *string
 	)
 
 	err := db.pool.QueryRow(ctx, `
-		SELECT id, email, name, lang, created_at, last_login_at, telegram_chat_id, password_hash
+		SELECT id, email, name, lang, created_at, last_login_at, telegram_chat_id, telegram_username, password_hash
 		FROM users
 		WHERE email = $1
 	`, email).Scan(
@@ -74,6 +75,7 @@ func (db *DB) Login(ctx context.Context, email, password string, ttl time.Durati
 		&user.CreatedAt,
 		&user.LastLoginAt,
 		&telegramChat,
+		&telegramUsername,
 		&passwordHash,
 	)
 	if err != nil {
@@ -89,6 +91,7 @@ func (db *DB) Login(ctx context.Context, email, password string, ttl time.Durati
 	}
 
 	user.TelegramChat = telegramChat
+	user.TelegramUsername = telegramUsername
 	if _, err := db.pool.Exec(ctx, `UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1`, user.ID); err != nil {
 		return domain.User{}, "", fmt.Errorf("update last login: %w", err)
 	}
@@ -104,9 +107,10 @@ func (db *DB) Login(ctx context.Context, email, password string, ttl time.Durati
 func (db *DB) FindUserByToken(ctx context.Context, token string) (domain.User, error) {
 	var user domain.User
 	var telegramChat *string
+	var telegramUsername *string
 
 	err := db.pool.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.lang, u.created_at, u.last_login_at, u.telegram_chat_id
+		SELECT u.id, u.email, u.name, u.lang, u.created_at, u.last_login_at, u.telegram_chat_id, u.telegram_username
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.token = $1 AND s.expires_at > NOW()
@@ -118,6 +122,7 @@ func (db *DB) FindUserByToken(ctx context.Context, token string) (domain.User, e
 		&user.CreatedAt,
 		&user.LastLoginAt,
 		&telegramChat,
+		&telegramUsername,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -128,6 +133,7 @@ func (db *DB) FindUserByToken(ctx context.Context, token string) (domain.User, e
 	}
 
 	user.TelegramChat = telegramChat
+	user.TelegramUsername = telegramUsername
 	return user, nil
 }
 

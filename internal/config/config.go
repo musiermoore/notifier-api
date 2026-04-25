@@ -6,20 +6,24 @@ import (
 )
 
 type Config struct {
-	Addr        string
-	Env         string
-	DefaultLang string
-	DatabaseURL string
-	SessionTTL  time.Duration
+	Addr                string
+	Env                 string
+	DefaultLang         string
+	DatabaseURL         string
+	SessionTTL          time.Duration
+	TelegramBotUsername string
+	BotServiceToken     string
 }
 
 func Load() Config {
 	return Config{
-		Addr:        getEnv("APP_ADDR", ":8080"),
-		Env:         getEnv("APP_ENV", "development"),
-		DefaultLang: getEnv("APP_DEFAULT_LANG", "ru"),
-		DatabaseURL: getEnv("APP_DATABASE_URL", "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"),
-		SessionTTL:  getDuration("APP_SESSION_TTL", 30*24*time.Hour),
+		Addr:                getEnv("APP_ADDR", ":8080"),
+		Env:                 getEnv("APP_ENV", "development"),
+		DefaultLang:         getEnv("APP_DEFAULT_LANG", "ru"),
+		DatabaseURL:         getEnv("APP_DATABASE_URL", "postgres://notifier:notifier@localhost:5432/notifier?sslmode=disable"),
+		SessionTTL:          getDuration("APP_SESSION_TTL", 30*24*time.Hour),
+		TelegramBotUsername: getEnv("APP_TELEGRAM_BOT_USERNAME", "your_bot_username"),
+		BotServiceToken:     getEnv("APP_BOT_SERVICE_TOKEN", "change_me_bot_service_token"),
 	}
 }
 

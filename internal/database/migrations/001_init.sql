@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     lang TEXT NOT NULL DEFAULT 'ru',
     telegram_chat_id TEXT,
+    telegram_username TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_login_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -49,3 +50,14 @@ CREATE TABLE IF NOT EXISTS items (
 
 CREATE INDEX IF NOT EXISTS items_user_id_updated_at_idx ON items(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS items_user_id_deleted_at_idx ON items(user_id, deleted_at);
+
+CREATE TABLE IF NOT EXISTS telegram_link_codes (
+    code TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS telegram_link_codes_user_id_idx ON telegram_link_codes(user_id);
+CREATE INDEX IF NOT EXISTS telegram_link_codes_expires_at_idx ON telegram_link_codes(expires_at);

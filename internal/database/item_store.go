@@ -72,6 +72,10 @@ func (db *DB) CreateItem(ctx context.Context, params CreateItemParams) (domain.I
 		return domain.Item{}, fmt.Errorf("create item: %w", err)
 	}
 
+	if err := db.SyncTelegramDeliveryForItem(ctx, item); err != nil {
+		return domain.Item{}, err
+	}
+
 	return item, nil
 }
 
@@ -214,21 +218,44 @@ func (db *DB) UpdateItem(ctx context.Context, params UpdateItemParams) (domain.I
 		return domain.Item{}, fmt.Errorf("update item: %w", err)
 	}
 
+	if err := db.SyncTelegramDeliveryForItem(ctx, item); err != nil {
+		return domain.Item{}, err
+	}
+
 	return item, nil
 }
 
 func (db *DB) DeleteItem(ctx context.Context, userID, itemID string) error {
-	commandTag, err := db.pool.Exec(ctx, `
+	var item domain.Item
+	err := db.pool.QueryRow(ctx, `
 		UPDATE items
 		SET deleted_at = NOW(), updated_at = NOW(), version = version + 1
 		WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
-	`, userID, itemID)
+		RETURNING id, user_id, title, body, lang, status, remind_at, repeat_rule, version, updated_at, deleted_at, source, deliver_to_telegram
+	`, userID, itemID).Scan(
+		&item.ID,
+		&item.UserID,
+		&item.Title,
+		&item.Body,
+		&item.Lang,
+		&item.Status,
+		&item.RemindAt,
+		&item.RepeatRule,
+		&item.Version,
+		&item.UpdatedAt,
+		&item.DeletedAt,
+		&item.Source,
+		&item.DeliverToTelegram,
+	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
 		return fmt.Errorf("delete item: %w", err)
 	}
 
-	if commandTag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := db.SyncTelegramDeliveryForItem(ctx, item); err != nil {
+		return err
 	}
 
 	return nil
