@@ -137,6 +137,38 @@ func (db *DB) FindUserByToken(ctx context.Context, token string) (domain.User, e
 	return user, nil
 }
 
+func (db *DB) FindUserByTelegramChat(ctx context.Context, chatID string) (domain.User, error) {
+	var user domain.User
+	var telegramChat *string
+	var telegramUsername *string
+
+	err := db.pool.QueryRow(ctx, `
+		SELECT id, email, name, lang, created_at, last_login_at, telegram_chat_id, telegram_username
+		FROM users
+		WHERE telegram_chat_id = $1
+	`, strings.TrimSpace(chatID)).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Name,
+		&user.Lang,
+		&user.CreatedAt,
+		&user.LastLoginAt,
+		&telegramChat,
+		&telegramUsername,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, ErrNotFound
+		}
+
+		return domain.User{}, fmt.Errorf("find telegram user: %w", err)
+	}
+
+	user.TelegramChat = telegramChat
+	user.TelegramUsername = telegramUsername
+	return user, nil
+}
+
 func (db *DB) DeleteSession(ctx context.Context, token string) error {
 	_, err := db.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, token)
 	if err != nil {

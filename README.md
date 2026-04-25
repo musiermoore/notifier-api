@@ -26,6 +26,8 @@ The API is the only service that talks to PostgreSQL directly.
 - `POST /v1/telegram/link-code`
 - `DELETE /v1/telegram/link`
 - `POST /v1/telegram/consume-link`
+- `GET /v1/internal/telegram/me`
+- `GET /v1/internal/telegram/items`
 - `GET /v1/internal/telegram/deliveries/pending`
 - `POST /v1/internal/telegram/deliveries/{id}/complete`
 - `POST /v1/internal/telegram/deliveries/{id}/fail`

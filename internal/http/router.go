@@ -40,6 +40,8 @@ func NewRouter(cfg config.Config, store *database.DB) http.Handler {
 	mux.Handle("POST /v1/telegram/link-code", app.requireAuth(http.HandlerFunc(app.handleTelegramLinkCode)))
 	mux.Handle("DELETE /v1/telegram/link", app.requireAuth(http.HandlerFunc(app.handleTelegramUnlink)))
 	mux.HandleFunc("POST /v1/telegram/consume-link", app.handleTelegramConsumeLink)
+	mux.Handle("GET /v1/internal/telegram/me", app.requireBotService(http.HandlerFunc(app.handleTelegramBotMe)))
+	mux.Handle("GET /v1/internal/telegram/items", app.requireBotService(http.HandlerFunc(app.handleTelegramBotItems)))
 	mux.Handle("GET /v1/internal/telegram/deliveries/pending", app.requireBotService(http.HandlerFunc(app.handlePendingTelegramDeliveries)))
 	mux.Handle("POST /v1/internal/telegram/deliveries/", app.requireBotService(http.HandlerFunc(app.handleTelegramDeliveryAction)))
 	mux.Handle("GET /v1/items", app.requireAuth(http.HandlerFunc(app.handleListItems)))
@@ -237,6 +239,55 @@ func (app *App) handlePendingTelegramDeliveries(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deliveries": deliveries,
+	})
+}
+
+func (app *App) handleTelegramBotMe(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.URL.Query().Get("chat_id"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat_id is required")
+		return
+	}
+
+	user, err := app.store.FindUserByTelegramChat(r.Context(), chatID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, database.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (app *App) handleTelegramBotItems(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.URL.Query().Get("chat_id"))
+	if chatID == "" {
+		writeError(w, http.StatusBadRequest, "chat_id is required")
+		return
+	}
+
+	user, err := app.store.FindUserByTelegramChat(r.Context(), chatID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, database.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	items, err := app.store.ListRecentItems(r.Context(), user.ID, 10)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":  user,
+		"items": items,
 	})
 }
 

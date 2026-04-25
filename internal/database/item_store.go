@@ -135,6 +135,50 @@ func (db *DB) ListItems(ctx context.Context, userID string, includeDeleted bool,
 	return items, nil
 }
 
+func (db *DB) ListRecentItems(ctx context.Context, userID string, limit int) ([]domain.Item, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+
+	rows, err := db.pool.Query(ctx, `
+		SELECT id, user_id, title, body, lang, status, remind_at, repeat_rule, version, updated_at, deleted_at, source, deliver_to_telegram
+		FROM items
+		WHERE user_id = $1 AND deleted_at IS NULL
+		ORDER BY updated_at DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.Item, 0, limit)
+	for rows.Next() {
+		var item domain.Item
+		if err := rows.Scan(
+			&item.ID,
+			&item.UserID,
+			&item.Title,
+			&item.Body,
+			&item.Lang,
+			&item.Status,
+			&item.RemindAt,
+			&item.RepeatRule,
+			&item.Version,
+			&item.UpdatedAt,
+			&item.DeletedAt,
+			&item.Source,
+			&item.DeliverToTelegram,
+		); err != nil {
+			return nil, fmt.Errorf("scan recent item: %w", err)
+		}
+
+		items = append(items, item)
+	}
+
+	return items, rows.Err()
+}
+
 func (db *DB) GetItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	var item domain.Item
 	err := db.pool.QueryRow(ctx, `
